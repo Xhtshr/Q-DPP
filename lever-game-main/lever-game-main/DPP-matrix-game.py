@@ -67,38 +67,49 @@ Q = init_population(env.num_choices, population)
 strategy = LinearDecay(epsilon_start, epsilon_end, decayed_by)
 lambda_weight = 0.85
 
-M = cross_play_testing(P, Q) # N人策略的元收益
+
+l_cards_1, l_cards_2 = [], []
 # 计算EXPECTED CARDINALITY
-L_1 = M[:,:,0] @ M[:,:,0].T
-l_card_1 = np.trace(np.eye(L_1.shape[0]) - np.linalg.inv(L_1 + np.eye(L_1.shape[0])))
-l_cards_1 = [l_card_1]
-# 计算EXPECTED CARDINALITY
-L_2 = M[:,:,1] @ M[:,:,1].T
-l_card_2 = np.trace(np.eye(L_2.shape[0]) - np.linalg.inv(L_2 + np.eye(L_2.shape[0])))
-l_cards_2 = [l_card_2]
-DPP = True
+def calculate_EC(l_cards_1, l_cards_2, M):
+
+    L_1 = M[:,:,0] @ M[:,:,0].T
+    l_card_1 = np.trace(np.eye(L_1.shape[0]) - np.linalg.inv(L_1 + np.eye(L_1.shape[0])))
+    l_cards_1.append(l_card_1)
+    # 计算EXPECTED CARDINALITY
+    L_2 = M[:,:,1] @ M[:,:,1].T
+    l_card_2 = np.trace(np.eye(L_2.shape[0]) - np.linalg.inv(L_2 + np.eye(L_2.shape[0])))
+    l_cards_2.append(l_card_2)
+    return l_card_1, l_card_2
+
+
+DPP = False
 # population training
 for ep in range(total_episodes):
+    M = cross_play_testing(P, Q)  # N人策略的元收益
+    l_card_1, l_card_2 = calculate_EC(l_cards_1, l_cards_2, M)
     iteration = 0
-    for p in P:
+    k = len(P)
+    for p, q in zip(P, Q):
+        ind = 1
         population_r = np.array([0, 0])
-        for q in Q:
-            state = 0
-            action = make_action(p, q, state, ep, strategy)
-            _, r, done, info = env.step(action)
-            # our environment has only one state but action [0,0],[0,1],[1,0],[1,1].
-            new_state = state
-            if DPP:
-                p.update_q_values(state, action, new_state, lambda_weight * r[0] + (1-lambda_weight)*l_card_1, done)
-                q.update_q_values(state, action, new_state, lambda_weight * r[1] + (1-lambda_weight)*l_card_2, done)
-                # 重新计算EXPECTED CARDINALITY
-
-            else:
-                p.update_q_values(state, action, new_state, r[0], done)
-                q.update_q_values(state, action, new_state, r[1], done)
-            # log training process
-            _, r, _, _ = env.step((p.get_optimal_action(state), q.get_optimal_action(state)))
-            population_r += np.array(r)
+        state = 0
+        action = make_action(p, q, state, ep, strategy)
+        _, r, done, info = env.step(action)
+        # our environment has only one state but action [0,0],[0,1],[1,0],[1,1].
+        new_state = state
+        if DPP:
+            p.update_q_values(state, action, new_state, lambda_weight * r[0] + (1-lambda_weight) * l_card_1, done)
+            q.update_q_values(state, action, new_state, lambda_weight * r[1] + (1-lambda_weight) * l_card_2, done)
+            # 重新计算EXPECTED CARDINALITY
+            M = cross_play_testing(P[:k-ind], Q[:k-ind])
+            l_card_1, l_card_2 = calculate_EC(l_cards_1, l_cards_2, M)
+            ind += 1
+        else:
+            p.update_q_values(state, action, new_state, r[0], done)
+            q.update_q_values(state, action, new_state, r[1], done)
+        # log training process
+        _, r, _, _ = env.step((p.get_optimal_action(state), q.get_optimal_action(state)))
+        population_r += np.array(r)
         log.update_training_log(iteration, ep, list(population_r))
         iteration += 1
     M = cross_play_testing(P, Q)  # N人策略的元收益
